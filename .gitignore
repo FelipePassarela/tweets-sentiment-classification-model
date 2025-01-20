@@ -1,0 +1,6 @@
+__pycache__/
+.pytest_cache/
+*.csv
+venv/
+*.egg-info/
+wandb/

@@ -1,0 +1,36 @@
+training:
+  epochs: 10
+  batch_size: 64
+  learning_rate: 2.0e-5
+  optimizer: "adamw" 
+  num_workers: 4
+  pin_memory: true
+
+model:
+  name: "cardiffnlp/twitter-roberta-base-sentiment-latest"
+  num_classes: 4
+  dropout: 0.1
+
+data:
+  raw:
+    training: "data/raw/twitter_training.csv"
+    validation: "data/raw/twitter_validation.csv"
+    test: "data/raw/twitter_test.csv"
+  processed:
+    training: "data/processed/twitter_training.csv"
+    validation: "data/processed/twitter_validation.csv"
+    test: "data/processed/twitter_test.csv"
+  label_map:
+    Negative: 0
+    Neutral: 1
+    Positive: 2
+    Irrelevant: 1
+  num_classes: 3
+  tokenizer:
+    name: "cardiffnlp/twitter-roberta-base-sentiment-latest"
+    max_length: 128
+  train_val_split: 0.8
+
+wandb:
+  project_name: "twitter-sentiment-analysis"
+  entity: "wandb"
