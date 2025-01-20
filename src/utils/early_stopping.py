@@ -1,8 +1,7 @@
-import os
-
 import numpy as np
-import torch
 import torch.nn as nn
+
+from src.utils.model_loader import save_model
 
 
 class EarlyStopping:
@@ -91,6 +90,5 @@ class EarlyStopping:
             - Updates the minimum validation loss (self.val_loss_min)
             - Saves only the model's state dictionary
         """
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        torch.save(model.state_dict(), path)
+        save_model(model, path)
         self.val_loss_min = score

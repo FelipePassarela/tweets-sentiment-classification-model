@@ -15,6 +15,7 @@ from src.datasets.text_dataset import TextDataset
 from src.utils.early_stopping import EarlyStopping
 from src.utils.optimizers import get_optimizer
 from src.utils.schedulers import get_scheduler
+from src.utils.model_loader import load_model
 
 
 def train_one_epoch(
@@ -311,7 +312,11 @@ def train(model: nn.Module):
             print("Early stopping triggered")
             break
 
-    model.load_state_dict(torch.load(config["training"]["early_stopping"]["checkpoint_path"]))
+    model = load_model(
+        model=model,
+        path=config["training"]["early_stopping"]["checkpoint_path"],
+        device=device
+    )
     test_metrics = eval_one_epoch(
         model=model,
         dataloader=test_loader,
