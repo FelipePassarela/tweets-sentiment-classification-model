@@ -20,7 +20,6 @@ training:
 
 model:
   name: "cardiffnlp/twitter-roberta-base-sentiment-latest"
-  num_classes: 4
 
 data:
   raw:
@@ -32,10 +31,10 @@ data:
     validation: "data/processed/twitter_validation.csv"
     test: "data/processed/twitter_test.csv"
   label_map:
+    Irrelevant: 1
     Negative: 0
     Neutral: 1
     Positive: 2
-    Irrelevant: 1
   num_classes: 3
   tokenizer:
     name: "cardiffnlp/twitter-roberta-base-sentiment-latest"
