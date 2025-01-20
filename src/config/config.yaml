@@ -5,11 +5,22 @@ training:
   optimizer: "adamw" 
   num_workers: 4
   pin_memory: true
+  early_stopping:
+    patience: 3
+    min_delta: 0.001
+    mode: "min"
+    checkpoint_path: "output/models/best_model.pt"
+  scheduler:
+    name: "one_cycle"
+    params:
+      pct_start: 0.3 
+      max_lr: 4.0e-5
+      div_factor: 25
+      final_div_factor: 1000
 
 model:
   name: "cardiffnlp/twitter-roberta-base-sentiment-latest"
   num_classes: 4
-  dropout: 0.1
 
 data:
   raw:
