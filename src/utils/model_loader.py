@@ -22,7 +22,7 @@ def load_model(model: nn.Module, path: str, device: str = None) -> nn.Module:
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         
-    state_dict = torch.load(path, map_location=device)
+    state_dict = torch.load(path, map_location=device, weights_only=True)
     model.load_state_dict(state_dict)
     model = model.to(device)
     

@@ -3,10 +3,29 @@ import os
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
-from src.config.config_loader import get_config
+from src.utils.getters import get_config
 
 
 def preprocess(data_path: str, output_path: str):
+    """
+    Preprocesses the raw data by mapping sentiment labels and saving to a new CSV file.
+
+    This function reads a CSV file, drops any rows with missing values, maps sentiment
+    labels according to the configuration, and saves the processed data to a new file.
+
+    Args:
+        data_path (str): Path to the input CSV file containing raw data.
+        output_path (str): Path where the preprocessed CSV file will be saved.
+
+    Returns:
+        None
+
+    Notes:
+        - Input CSV should have columns: "id", "entity", "sentiment", "text"
+        - Sentiment labels are mapped according to label_map in config
+        - Creates output directory if it doesn't exist
+        - Prints confirmation message when save is complete
+    """
     config = get_config()
 
     columns = ["id", "entity", "sentiment", "text"]
@@ -24,14 +43,10 @@ def preprocess(data_path: str, output_path: str):
 if __name__ == "__main__":
     config = get_config()
 
-    preprocess(
-        config["data"]["raw"]["training"],
-        config["data"]["processed"]["training"],
-    )
-    preprocess(
-        config["data"]["raw"]["test"],
-        config["data"]["processed"]["test"],
-    )
+    preprocess(config["data"]["raw"]["training"],
+               config["data"]["processed"]["training"])
+    preprocess(config["data"]["raw"]["test"],
+               config["data"]["processed"]["test"])
 
     train_size = config["data"]["train_val_split"]
     df_train = pd.read_csv(config["data"]["processed"]["training"])

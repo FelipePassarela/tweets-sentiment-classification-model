@@ -1,7 +1,7 @@
 training:
   epochs: 10
-  batch_size: 64
-  learning_rate: 2.0e-5
+  batch_size: 128
+  learning_rate: 6.0e-5
   optimizer: "adamw" 
   num_workers: 4
   pin_memory: true
@@ -9,17 +9,24 @@ training:
     patience: 3
     min_delta: 0.001
     mode: "min"
-    checkpoint_path: "output/models/best_model.pt"
+    checkpoint_path: "output/models/"
   scheduler:
     name: "one_cycle"
     params:
       pct_start: 0.3 
-      max_lr: 4.0e-5
+      max_lr: 11.0e-5
       div_factor: 25
       final_div_factor: 1000
+  loss_fn: "cross_entropy"
 
 model:
-  name: "cardiffnlp/twitter-roberta-base-sentiment-latest"
+  model:
+  embedding_dim: 384
+  hidden_dim: 256
+  output_dim: 3
+  n_layers: 3
+  bidirectional: true
+  dropout: 0.1
 
 data:
   raw:

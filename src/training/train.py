@@ -1,21 +1,20 @@
-from typing import Callable
+from pathlib import Path
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torchmetrics
+from torch.nn.modules.loss import _Loss
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from transformers import AutoTokenizer
 
 import wandb
-from src.config.config_loader import get_config
-from src.datasets.text_dataset import TextDataset
+from src.training.eval import eval_one_epoch
 from src.utils.early_stopping import EarlyStopping
-from src.utils.optimizers import get_optimizer
-from src.utils.schedulers import get_scheduler
+from src.utils.getters import get_config, get_loss_fn, get_scheduler
 from src.utils.model_loader import load_model
+from src.utils.optimizers import get_optimizer
 
 
 def train_one_epoch(
@@ -23,7 +22,7 @@ def train_one_epoch(
     dataloader: DataLoader,
     optimizer: optim.Optimizer,
     scheduler: object,
-    criterion: Callable,
+    criterion: _Loss,
     device: str,
     scaler: torch.amp.GradScaler,
 ) -> dict[str, float]:
@@ -39,7 +38,7 @@ def train_one_epoch(
         dataloader (DataLoader): DataLoader containing the training data
         optimizer (optim.Optimizer): The optimizer used for updating model parameters
         scheduler (object): Learning rate scheduler
-        criterion (Callable): The loss function used for computing training loss
+        criterion (_Loss): The loss function used for computing training loss
         device (str): Device to run the training on ('cuda' or 'cpu')
         scaler (torch.amp.GradScaler): Gradient scaler for mixed precision training
 
@@ -55,13 +54,11 @@ def train_one_epoch(
             - learning_rate: Current learning rate
     """
     num_batches = len(dataloader)
-    progress = tqdm(
-        dataloader,
-        total=num_batches,
-        desc="Training",
-        unit="batch",
-        colour="green"
-    )
+    progress = tqdm(dataloader,
+                    total=num_batches,
+                    desc="Training",
+                    unit="batch",
+                    colour="green")
 
     num_classes = get_config()["data"]["num_classes"]
     metrics = torchmetrics.MetricCollection([
@@ -70,9 +67,9 @@ def train_one_epoch(
         torchmetrics.Precision(task="multiclass", num_classes=num_classes),
         torchmetrics.Recall(task="multiclass", num_classes=num_classes),
         torchmetrics.AUROC(task="multiclass", num_classes=num_classes),
-        torchmetrics.ConfusionMatrix(task="multiclass", num_classes=num_classes),
-    ]).to(device)
+        torchmetrics.ConfusionMatrix(task="multiclass", num_classes=num_classes)]).to(device)
     running_loss = torchmetrics.RunningMean(window=100).to(device)
+    mean_loss = torchmetrics.MeanMetric().to(device)
 
     model.train()
     for batch in progress:
@@ -80,7 +77,8 @@ def train_one_epoch(
         labels = batch.pop("labels")
         
         with torch.autocast(device):
-            preds = model(**batch).logits
+            preds = model(**batch)
+            preds = preds.logits if hasattr(preds, "logits") else preds
             loss = criterion(preds, labels)
 
         optimizer.zero_grad()
@@ -93,6 +91,7 @@ def train_one_epoch(
             
         current_lr = optimizer.param_groups[0]['lr']
         running_loss.update(loss.item())
+        mean_loss.update(loss.item())
         metrics.update(preds, labels)
         computed_metrics = metrics.compute()
 
@@ -100,109 +99,22 @@ def train_one_epoch(
             "Loss": f"{running_loss.compute():.4f}",
             "Accuracy": f"{computed_metrics['MulticlassAccuracy'].item():.4f}",
             "ROC AUC": f"{computed_metrics['MulticlassAUROC'].item():.4f}",
-            "LR": f"{current_lr:.2e}"
-        })
+            "LR": f"{current_lr:.2e}"})
 
     avg_metrics = {
-        "Loss": running_loss.compute(),
+        "Loss": mean_loss.compute(),
         "Learning Rate": current_lr,
-        **computed_metrics
-    }
+        **computed_metrics}
     return avg_metrics
 
 
-def eval_one_epoch(
-    model: nn.Module,
-    dataloader: DataLoader,
-    criterion: Callable,
-    device: str,
-    is_testing: bool = False,
-) -> dict[str, float]:
-    """
-    Evaluate the model on a dataset.
-
-    This function evaluates the model's performance by computing various metrics including
-    accuracy, F1 score, precision, recall, AUROC and confusion matrix. It processes the 
-    data in batches and displays a progress bar with live metrics.
-
-    Args:
-        model (nn.Module): PyTorch model to validate/test
-        dataloader (DataLoader): DataLoader containing validation/test data
-        criterion (Callable): Loss function to calculate model error
-        device (str): Device to run the validation on ('cpu' or 'cuda')
-        is_testing (bool, optional): Flag to indicate if this is a testing run. 
-                                     Affects progress bar appearance. Defaults to False.
-
-    Returns:
-        dict[str, float]: Dictionary containing averaged metrics including:
-            - loss: Average loss over all batches
-            - accuracy: Model accuracy
-            - f1_score: F1 score
-            - precision: Precision score
-            - recall: Recall score
-            - auroc: Area Under the ROC Curve
-            - confusion_matrix: Confusion matrix for multiclass classification
-
-    Note:
-        The function runs in evaluation mode and doesn't compute gradients.
-    """
-    num_batches = len(dataloader)
-    progress = tqdm(
-        dataloader, 
-        total=num_batches, 
-        desc="Validation" if not is_testing else "Testing",
-        unit="batch", 
-        colour="yellow" if not is_testing else "blue"
-    )
-
-    num_classes = get_config()["data"]["num_classes"]
-    metrics = torchmetrics.MetricCollection([
-        torchmetrics.Accuracy(task="multiclass", num_classes=num_classes),
-        torchmetrics.F1Score(task="multiclass", num_classes=num_classes),
-        torchmetrics.Precision(task="multiclass", num_classes=num_classes),
-        torchmetrics.Recall(task="multiclass", num_classes=num_classes),
-        torchmetrics.AUROC(task="multiclass", num_classes=num_classes),
-        torchmetrics.ConfusionMatrix(task="multiclass", num_classes=num_classes),
-    ]).to(device)
-    running_loss = torchmetrics.RunningMean(window=100).to(device)
-
-    model.eval()
-    with torch.no_grad():
-        for batch in progress:
-            batch = {k: v.to(device) for k, v in batch.items()}
-            labels = batch.pop("labels")
-
-            preds = model(**batch).logits
-            loss = criterion(preds, labels)
-
-            running_loss.update(loss.item())
-            metrics.update(preds, labels)
-            computed_metrics = metrics.compute()
-
-            progress.set_postfix({
-                "Loss": f"{running_loss.compute():.4f}",
-                "Accuracy": f"{computed_metrics["MulticlassAccuracy"].item():.4f}",
-                "ROC AUC": f"{computed_metrics["MulticlassAUROC"].item():.4f}",
-            })
-
-    avg_metrics = {"Loss": running_loss.compute(), **computed_metrics}
-    return avg_metrics
-
-
-def train(model: nn.Module):
+def train(model: nn.Module, train_loader: DataLoader, val_loader: DataLoader):
     """
     Train a PyTorch model for sentiment analysis.
 
-    This function handles the complete training pipeline including:
-    - Setting up device (CPU/GPU)
-    - Loading and preparing datasets
-    - Creating data loaders
-    - Training for specified number of epochs
-    - Validating after each epoch
-    - Learning rate scheduling
-    - Early stopping based on validation loss
-    - Testing final model performance
-    - Logging metrics to Weights & Biases
+    This function trains the model for a specified number of epochs, evaluating the model
+    on the validation set after each epoch. It uses the specified optimizer and learning rate
+    scheduler in configuration file to update the model's parameters.
 
     Args:
         model (nn.Module): PyTorch model to be trained
@@ -211,82 +123,39 @@ def train(model: nn.Module):
         None
     """
     config = get_config()
+    model_name = type(model).__name__    
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = model.to(device)
     print(f"Training on {device}")
 
-    tokenizer = AutoTokenizer.from_pretrained(config["data"]["tokenizer"]["name"])
-    model = model.to(device)
-
-    train_dataset = TextDataset(
-        data_path=config["data"]["processed"]["training"],
-        tokenizer=tokenizer,
-    )
-    val_dataset = TextDataset(
-        data_path=config["data"]["processed"]["validation"],
-        tokenizer=tokenizer,
-    )
-    test_dataset = TextDataset(
-        data_path=config["data"]["processed"]["test"],
-        tokenizer=tokenizer,
-    )
-
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=config["training"]["batch_size"],
-        shuffle=True,
-        num_workers=config["training"]["num_workers"],
-        pin_memory=config["training"]["pin_memory"],
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=config["training"]["batch_size"],
-        shuffle=False,
-        num_workers=config["training"]["num_workers"],
-        pin_memory=config["training"]["pin_memory"],
-    )
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=config["training"]["batch_size"],
-        shuffle=False,
-        num_workers=config["training"]["num_workers"],
-        pin_memory=config["training"]["pin_memory"],
-    )
-
-    criterion = nn.CrossEntropyLoss()
+    criterion = get_loss_fn(config)
     optimizer = get_optimizer(model, config)
     scaler = torch.amp.GradScaler()
-    scheduler = get_scheduler(
-        optimizer=optimizer,
-        config=config,
-        steps_per_epoch=len(train_loader)
-    )
-    early_stopping = EarlyStopping(
-        patience=config["training"]["early_stopping"]["patience"],
-        min_delta=config["training"]["early_stopping"]["min_delta"],
-        mode=config["training"]["early_stopping"]["mode"]
-    )
+    scheduler = get_scheduler(optimizer=optimizer,
+                              config=config,
+                              steps_per_epoch=len(train_loader))
+    early_stopping = EarlyStopping(patience=  config["training"]["early_stopping"]["patience"],
+                                   min_delta= config["training"]["early_stopping"]["min_delta"],
+                                   mode=      config["training"]["early_stopping"]["mode"])
 
-    wandb.init(project=config["wandb"]["project_name"], config=config)
-
+    checkpoint_path = Path(config["training"]["early_stopping"]["checkpoint_path"]) / f"{model_name}.pt"
     num_epochs = config["training"]["epochs"]
-    for epoch in range(num_epochs):
-        print(f"Epoch {epoch + 1}/{num_epochs}")
 
-        train_metrics = train_one_epoch(
-            model=model,
-            dataloader=train_loader,
-            criterion=criterion,
-            optimizer=optimizer,
-            scheduler=scheduler,
-            device=device,
-            scaler=scaler,
-        )
-        val_metrics = eval_one_epoch(
-            model=model,
-            dataloader=val_loader,
-            criterion=criterion,
-            device=device,
-        )
+    for epoch in range(num_epochs):
+        print(f"Epoch {epoch + 1}/{num_epochs} - {model_name}")
+
+        train_metrics = train_one_epoch(model=model,
+                                        dataloader=train_loader,
+                                        criterion=criterion,
+                                        optimizer=optimizer,
+                                        scheduler=scheduler,
+                                        device=device,
+                                        scaler=scaler)
+        val_metrics = eval_one_epoch(model=model,
+                                     dataloader=val_loader,
+                                     criterion=criterion,
+                                     device=device)
 
         train_metrics = {f"Train/{k.replace("Multiclass", "")}": v for k, v in train_metrics.items()}
         val_metrics = {f"Val/{k.replace("Multiclass", "")}": v for k, v in val_metrics.items()}
@@ -302,35 +171,10 @@ def train(model: nn.Module):
         if isinstance(scheduler, ReduceLROnPlateau):
             scheduler.step(val_metrics["Loss"])
 
-        early_stopping(
-            val_metrics["Val/Loss"],
-            model,
-            config["training"]["early_stopping"]["checkpoint_path"]
-        )
-        
+        early_stopping(val_metrics["Val/Loss"], model, checkpoint_path)
         if early_stopping.early_stop:
             print("Early stopping triggered")
             break
 
-    model = load_model(
-        model=model,
-        path=config["training"]["early_stopping"]["checkpoint_path"],
-        device=device
-    )
-    test_metrics = eval_one_epoch(
-        model=model,
-        dataloader=test_loader,
-        criterion=criterion,
-        device=device,
-        is_testing=True,
-    )
-
-    test_metrics = {f"Test/{k.replace("Multiclass", "")}": v for k, v in test_metrics.items()}
-    wandb.log(test_metrics)
-
-    print(f"Test Loss: {test_metrics['Test/Loss']:.4f} | "
-          f"Test Accuracy: {test_metrics['Test/Accuracy']:.4f} | "
-          f"Test ROC AUC: {test_metrics['Test/AUROC']:.4f}")
-
-    wandb.finish()
+    model = load_model(model, checkpoint_path, device=device)
     print("Training complete!")
