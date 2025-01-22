@@ -27,7 +27,11 @@ class LSTMSentimentClassifier(nn.Module):
 
     def forward(self, **kwargs):
         text = kwargs["input_ids"]
+        attention_mask = kwargs.get("attention_mask", None)
+
         embedded = self.dropout(self.embedding(text))
+        embedded = embedded * attention_mask.unsqueeze(-1) if attention_mask is not None else embedded
         _, (hidden, _) = self.lstm(embedded)
         hidden = self.dropout(torch.cat((hidden[-2, :, :], hidden[-1, :, :]), dim=1))
+        
         return self.fc(hidden)
