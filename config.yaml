@@ -20,7 +20,6 @@ training:
   loss_fn: "cross_entropy"
 
 model:
-  model:
   embedding_dim: 384
   hidden_dim: 256
   output_dim: 3
